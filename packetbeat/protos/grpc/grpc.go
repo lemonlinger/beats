@@ -22,7 +22,8 @@ type grpcPlugin struct {
 	watcher      *procs.ProcessesWatcher
 	pub          transPub
 
-	protoParser ProtoParser
+	protoParser  ProtoParser
+	hpackDecoder *HPackDecoder
 }
 
 type HPackDecoder struct {
@@ -53,8 +54,6 @@ func (h *HPackDecoder) Decode(hf *http2.HeadersFrame) ([]hpack.HeaderField, erro
 type connection struct {
 	streams [2]*stream
 	trans   transactions
-
-	hpackDecoder *HPackDecoder
 }
 
 // Uni-directional tcp stream state for parsing messages.
@@ -101,6 +100,7 @@ func (gp *grpcPlugin) init(results protos.Reporter, watcher *procs.ProcessesWatc
 	}
 	gp.pub.results = results
 	gp.watcher = watcher
+	gp.hpackDecoder = newHPackDecoder()
 
 	if gp.parserConfig.decodeBody {
 		// prior to use reflection
@@ -178,7 +178,7 @@ func (gp *grpcPlugin) Parse(
 	st := conn.streams[dir]
 	if st == nil {
 		st = &stream{}
-		st.parser.init(&gp.parserConfig, conn.hpackDecoder, gp.protoParser, func(msg *message) error {
+		st.parser.init(&gp.parserConfig, gp.hpackDecoder, gp.protoParser, func(msg *message) error {
 			return conn.trans.onMessage(tcptuple.IPPort(), dir, msg)
 		})
 		conn.streams[dir] = st
@@ -222,7 +222,6 @@ func (gp *grpcPlugin) ensureConnection(private protos.ProtocolData) *connection 
 	conn := getConnection(private)
 	if conn == nil {
 		conn = &connection{}
-		conn.hpackDecoder = newHPackDecoder()
 		conn.trans.init(&gp.transConfig, gp.watcher, gp.pub.onTransaction)
 	}
 	return conn
