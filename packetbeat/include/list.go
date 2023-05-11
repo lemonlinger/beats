@@ -25,6 +25,7 @@ import (
 	_ "github.com/elastic/beats/v7/packetbeat/protos/cassandra"
 	_ "github.com/elastic/beats/v7/packetbeat/protos/dhcpv4"
 	_ "github.com/elastic/beats/v7/packetbeat/protos/dns"
+	_ "github.com/elastic/beats/v7/packetbeat/protos/grpc"
 	_ "github.com/elastic/beats/v7/packetbeat/protos/http"
 	_ "github.com/elastic/beats/v7/packetbeat/protos/icmp"
 	_ "github.com/elastic/beats/v7/packetbeat/protos/memcache"
