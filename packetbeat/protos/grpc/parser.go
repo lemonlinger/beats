@@ -49,6 +49,7 @@ type message struct {
 	status string
 
 	headerPartiallyParse bool
+	pathGuessed          bool
 
 	rawBody []byte
 	msgBody *dynamic.Message
@@ -223,11 +224,12 @@ func (p *parser) parse() (*message, error) {
 			}
 		case *http2.DataFrame:
 			var possiblePaths []string
-			if path, ok := p.pathcache[frame.StreamID]; ok {
+			if path, ok := p.pathcache[frame.StreamID]; ok && path != "" {
 				possiblePaths = append(possiblePaths, path)
 			}
 			if len(possiblePaths) == 0 {
 				possiblePaths = p.protoPrarser.GetAllPaths()
+				p.message.pathGuessed = true
 			}
 
 			maxMsgSize := -1

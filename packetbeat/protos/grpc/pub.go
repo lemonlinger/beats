@@ -58,19 +58,25 @@ func (pub *transPub) createEvent(requ, resp *message) beat.Event {
 
 	if pub.sendRequest {
 		fields["request"] = mapstr.M{
-			"method":       requ.method,
-			"path":         requ.path,
-			"headers":      requ.headers,
-			"body.content": common.NetString(requ.rawBody),
-			"body.bytes":   len(requ.rawBody),
+			"stream_id":      requ.streamID,
+			"method":         requ.method,
+			"path":           requ.path,
+			"headers":        requ.headers,
+			"body.content":   common.NetString(requ.rawBody),
+			"body.bytes":     len(requ.rawBody),
+			"partial_header": requ.headerPartiallyParse,
 		}
 	}
 	if pub.sendResponse {
 		fields["response"] = mapstr.M{
-			"status":       resp.status,
-			"headers":      resp.headers,
-			"body.content": common.NetString(resp.rawBody),
-			"body.bytes":   len(resp.rawBody),
+			"stream_id":      resp.streamID,
+			"status":         resp.status,
+			"path":           resp.path,
+			"guessed_path":   resp.pathGuessed,
+			"headers":        resp.headers,
+			"body.content":   common.NetString(resp.rawBody),
+			"body.bytes":     len(resp.rawBody),
+			"partial_header": resp.headerPartiallyParse,
 		}
 	}
 
