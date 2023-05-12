@@ -4,7 +4,6 @@ import (
 	"errors"
 	"io"
 	"io/ioutil"
-	"time"
 
 	"github.com/jhump/protoreflect/dynamic"
 	"golang.org/x/net/http2"
@@ -39,6 +38,8 @@ type parserConfig struct {
 
 type message struct {
 	applayer.Message
+
+	streamID uint32
 
 	method      string
 	path        string
@@ -130,7 +131,6 @@ func (p *parser) isServicePort(port int) bool {
 }
 
 func (p *parser) feed(pkt *protos.Packet) error {
-	ts := pkt.Ts
 	data := pkt.Payload
 	if err := p.append(data); err != nil {
 		return err
@@ -139,7 +139,7 @@ func (p *parser) feed(pkt *protos.Packet) error {
 	for p.buf.Total() > 0 {
 		if p.message == nil {
 			// allocate new message object to be used by parser with current timestamp
-			p.message = p.newMessage(ts)
+			p.message = p.newMessage(pkt)
 			p.message.IsRequest = p.isServicePort(int(pkt.Tuple.DstPort))
 		}
 
@@ -164,10 +164,13 @@ func (p *parser) feed(pkt *protos.Packet) error {
 	return nil
 }
 
-func (p *parser) newMessage(ts time.Time) *message {
+func (p *parser) newMessage(pkt *protos.Packet) *message {
 	return &message{
 		Message: applayer.Message{
-			Ts: ts,
+			Ts:        pkt.Ts,
+			Transport: applayer.TransportTCP,
+			IsRequest: p.isServicePort(int(pkt.Tuple.DstPort)),
+			Size:      0,
 		},
 	}
 }
@@ -186,6 +189,9 @@ func (p *parser) parse() (*message, error) {
 			}
 			return nil, err
 		}
+
+		p.message.streamID = frame.Header().StreamID
+		p.message.Size += uint64(frame.Header().Length)
 
 		switch frame := frame.(type) {
 		case *http2.HeadersFrame:

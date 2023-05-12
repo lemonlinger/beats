@@ -12,8 +12,8 @@ import (
 type transactions struct {
 	config *transactionConfig
 
-	requests  messageList
-	responses messageList
+	requests  map[uint32]*messageList
+	responses map[uint32]*messageList
 
 	onTransaction transactionHandler
 
@@ -35,6 +35,13 @@ func (trans *transactions) init(c *transactionConfig, watcher *procs.ProcessesWa
 	trans.config = c
 	trans.watcher = watcher
 	trans.onTransaction = cb
+	trans.requests = make(map[uint32]*messageList)
+	trans.responses = make(map[uint32]*messageList)
+}
+
+func (trans *transactions) clear() {
+	trans.requests = make(map[uint32]*messageList)
+	trans.responses = make(map[uint32]*messageList)
 }
 
 func (trans *transactions) onMessage(
@@ -70,7 +77,12 @@ func (trans *transactions) onRequest(
 	dir uint8,
 	msg *message,
 ) error {
-	prev := trans.requests.last()
+	requests := trans.requests[msg.streamID]
+	if requests == nil {
+		requests = &messageList{}
+		trans.requests[msg.streamID] = requests
+	}
+	prev := requests.last()
 	merged, err := trans.tryMergeRequests(prev, msg)
 	if err != nil {
 		return err
@@ -86,14 +98,14 @@ func (trans *transactions) onRequest(
 		}
 		msg = prev
 	} else {
-		trans.requests.append(msg)
+		requests.append(msg)
 	}
 
 	if isDebug {
-		debugf("request message complete: %v", *msg)
+		debugf("request message complete: %+v", *msg)
 	}
 
-	return trans.correlate()
+	return trans.correlate(msg.streamID)
 }
 
 // onRequest handles response messages, merging with incomplete requests
@@ -103,7 +115,12 @@ func (trans *transactions) onResponse(
 	dir uint8,
 	msg *message,
 ) error {
-	prev := trans.responses.last()
+	responses := trans.responses[msg.streamID]
+	if responses == nil {
+		responses = &messageList{}
+		trans.responses[msg.streamID] = responses
+	}
+	prev := responses.last()
 	merged, err := trans.tryMergeResponses(prev, msg)
 	if err != nil {
 		return err
@@ -119,14 +136,14 @@ func (trans *transactions) onResponse(
 		}
 		msg = prev
 	} else {
-		trans.responses.append(msg)
+		responses.append(msg)
 	}
 
 	if isDebug {
-		debugf("response message complete: %v", *msg)
+		debugf("response message complete[]: %+v", *msg)
 	}
 
-	return trans.correlate()
+	return trans.correlate(msg.streamID)
 }
 
 func (trans *transactions) tryMergeRequests(
@@ -141,13 +158,13 @@ func (trans *transactions) tryMergeResponses(prev, msg *message) (merged bool, e
 	return false, nil
 }
 
-func (trans *transactions) correlate() error {
-	requests := &trans.requests
-	responses := &trans.responses
+func (trans *transactions) correlate(streamID uint32) error {
+	requests := trans.requests[streamID]
+	responses := trans.responses[streamID]
 
 	// drop responses with missing requests
-	if requests.empty() {
-		for !responses.empty() {
+	if requests == nil || requests.empty() {
+		for responses != nil && !responses.empty() {
 			logp.Warn("Response from unknown transaction. Ignoring.")
 			responses.pop()
 		}
@@ -155,7 +172,7 @@ func (trans *transactions) correlate() error {
 	}
 
 	// merge requests with responses into transactions
-	for !responses.empty() && !requests.empty() {
+	for (responses != nil && !responses.empty()) && (requests != nil && !requests.empty()) {
 		resp := responses.first()
 		if !resp.isComplete {
 			break
@@ -163,6 +180,10 @@ func (trans *transactions) correlate() error {
 
 		requ := requests.pop()
 		responses.pop()
+
+		// Don't support grpc streaming traffic capturing, so we assume only a pair of request and response for each stream id.
+		delete(trans.requests, streamID)
+		delete(trans.responses, streamID)
 
 		if err := trans.onTransaction(requ, resp); err != nil {
 			return err

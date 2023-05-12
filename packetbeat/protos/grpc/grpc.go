@@ -221,6 +221,7 @@ func (gp *grpcPlugin) ReceivedFin(
 	if conn == nil {
 		return private
 	}
+	conn.trans.clear()
 
 	stream := conn.streams[dir]
 	if stream == nil {
