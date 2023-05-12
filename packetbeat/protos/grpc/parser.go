@@ -10,6 +10,7 @@ import (
 	"golang.org/x/net/http2"
 
 	"github.com/elastic/beats/v7/libbeat/common/streambuf"
+	"github.com/elastic/beats/v7/packetbeat/protos"
 	"github.com/elastic/beats/v7/packetbeat/protos/applayer"
 )
 
@@ -21,11 +22,15 @@ type parser struct {
 	onMessage    func(m *message) error
 	hpackDecoer  *HPackDecoder
 	protoPrarser ProtoParser
+
+	// stream ID ->
+	pathcache map[uint32]string
 }
 
 type parserConfig struct {
 	maxBytes int
 
+	servicePorts             map[int]struct{}
 	decodeBody               bool
 	protoImportPaths         []string
 	protoFileNames           []string
@@ -70,7 +75,6 @@ func (m *message) mergeHeaders(headers map[string]string) {
 			m.contentType = v
 		case ":status":
 			m.status = v
-			m.IsRequest = false
 		}
 	}
 }
@@ -100,6 +104,8 @@ func (p *parser) init(
 		hpackDecoer:  decoder,
 		protoPrarser: protoParser,
 		onMessage:    onMessage,
+
+		pathcache: make(map[uint32]string),
 	}
 }
 
@@ -115,7 +121,17 @@ func (p *parser) append(data []byte) error {
 	return nil
 }
 
-func (p *parser) feed(ts time.Time, data []byte) error {
+func (p *parser) isServicePort(port int) bool {
+	if p.config == nil {
+		return false
+	}
+	_, ok := p.config.servicePorts[port]
+	return ok
+}
+
+func (p *parser) feed(pkt *protos.Packet) error {
+	ts := pkt.Ts
+	data := pkt.Payload
 	if err := p.append(data); err != nil {
 		return err
 	}
@@ -124,7 +140,7 @@ func (p *parser) feed(ts time.Time, data []byte) error {
 		if p.message == nil {
 			// allocate new message object to be used by parser with current timestamp
 			p.message = p.newMessage(ts)
-			p.message.IsRequest = true
+			p.message.IsRequest = p.isServicePort(int(pkt.Tuple.DstPort))
 		}
 
 		msg, err := p.parse()
@@ -178,26 +194,31 @@ func (p *parser) parse() (*message, error) {
 			if err == nil {
 				for _, field := range hfs {
 					headers[field.Name] = field.Value
+					if field.Name == ":path" {
+						p.pathcache[frame.StreamID] = field.Value
+					}
 				}
 			} else {
 				// try to parse partially
 				buf := frame.HeaderBlockFragment()
 				for _, field := range p.hpackDecoer.DecodePartial(buf) {
 					headers[field.Name] = field.Value
+					if field.Name == ":path" {
+						p.pathcache[frame.StreamID] = field.Value
+					}
 				}
 				p.message.headerPartiallyParse = true
 			}
 			p.message.mergeHeaders(headers)
 
 			if frame.StreamEnded() {
+				delete(p.pathcache, frame.StreamID)
 				return p.message, nil
 			}
 		case *http2.DataFrame:
 			var possiblePaths []string
-			for key, value := range p.message.headers {
-				if key == ":path" {
-					possiblePaths = append(possiblePaths, value)
-				}
+			if path, ok := p.pathcache[frame.StreamID]; ok {
+				possiblePaths = append(possiblePaths, path)
 			}
 			if len(possiblePaths) == 0 {
 				possiblePaths = p.protoPrarser.GetAllPaths()
@@ -233,6 +254,7 @@ func (p *parser) parse() (*message, error) {
 			}
 
 			if frame.StreamEnded() {
+				delete(p.pathcache, frame.StreamID)
 				return p.message, nil
 			}
 		case *http2.RSTStreamFrame:
@@ -241,4 +263,8 @@ func (p *parser) parse() (*message, error) {
 			return nil, errors.New("server is going away")
 		}
 	}
+}
+
+func (p *parser) clear() {
+	p.pathcache = map[uint32]string{}
 }

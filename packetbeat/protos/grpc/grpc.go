@@ -137,6 +137,11 @@ func (gp *grpcPlugin) setFromConfig(config *grpcConfig) error {
 	parser := &gp.parserConfig
 	parser.maxBytes = tcp.TCPMaxDataInStream
 
+	parser.servicePorts = make(map[int]struct{})
+	for _, p := range config.Ports {
+		parser.servicePorts[p] = struct{}{}
+	}
+
 	parser.decodeBody = config.DecodeBody
 	parser.protoImportPaths = config.ProtoImportPaths
 	parser.protoFileNames = config.ProtoFileNames
@@ -184,7 +189,7 @@ func (gp *grpcPlugin) Parse(
 		conn.streams[dir] = st
 	}
 
-	if err := st.parser.feed(pkt.Ts, pkt.Payload); err != nil {
+	if err := st.parser.feed(pkt); err != nil {
 		debugf("%v, dropping TCP stream for error in direction %v.", err, dir)
 		gp.onDropConnection(conn)
 		return nil
@@ -211,6 +216,18 @@ func (gp *grpcPlugin) ReceivedFin(
 	private protos.ProtocolData,
 ) protos.ProtocolData {
 	gp.delHPackDecoder(tcptuple.Hashable())
+
+	conn := getConnection(private)
+	if conn == nil {
+		return private
+	}
+
+	stream := conn.streams[dir]
+	if stream == nil {
+		return conn
+	}
+
+	stream.parser.clear()
 	return private
 }
 

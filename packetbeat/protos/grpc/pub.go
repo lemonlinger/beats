@@ -69,7 +69,7 @@ func (pub *transPub) createEvent(requ, resp *message) beat.Event {
 		fields["response"] = mapstr.M{
 			"status":       resp.status,
 			"headers":      resp.headers,
-			"body.content": common.NetString(requ.rawBody),
+			"body.content": common.NetString(resp.rawBody),
 			"body.bytes":   len(resp.rawBody),
 		}
 	}
