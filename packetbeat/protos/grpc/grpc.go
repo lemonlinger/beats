@@ -22,8 +22,8 @@ type grpcPlugin struct {
 	watcher      *procs.ProcessesWatcher
 	pub          transPub
 
-	protoParser  ProtoParser
-	hpackDecoder *HPackDecoder
+	protoParser   ProtoParser
+	hpackDecoders map[common.HashableTCPTuple]*HPackDecoder
 }
 
 type HPackDecoder struct {
@@ -100,7 +100,7 @@ func (gp *grpcPlugin) init(results protos.Reporter, watcher *procs.ProcessesWatc
 	}
 	gp.pub.results = results
 	gp.watcher = watcher
-	gp.hpackDecoder = newHPackDecoder()
+	gp.hpackDecoders = make(map[common.HashableTCPTuple]*HPackDecoder)
 
 	if gp.parserConfig.decodeBody {
 		// prior to use reflection
@@ -178,7 +178,7 @@ func (gp *grpcPlugin) Parse(
 	st := conn.streams[dir]
 	if st == nil {
 		st = &stream{}
-		st.parser.init(&gp.parserConfig, gp.hpackDecoder, gp.protoParser, func(msg *message) error {
+		st.parser.init(&gp.parserConfig, gp.getHPACKDecoder(tcptuple.Hashable()), gp.protoParser, func(msg *message) error {
 			return conn.trans.onMessage(tcptuple.IPPort(), dir, msg)
 		})
 		conn.streams[dir] = st
@@ -192,11 +192,25 @@ func (gp *grpcPlugin) Parse(
 	return conn
 }
 
+func (gp *grpcPlugin) getHPACKDecoder(id common.HashableTCPTuple) *HPackDecoder {
+	d := gp.hpackDecoders[id]
+	if d == nil {
+		d = newHPackDecoder()
+		gp.hpackDecoders[id] = d
+	}
+	return d
+}
+
+func (gp *grpcPlugin) delHPackDecoder(id common.HashableTCPTuple) {
+	delete(gp.hpackDecoders, id)
+}
+
 // ReceivedFin handles TCP-FIN packet.
 func (gp *grpcPlugin) ReceivedFin(
 	tcptuple *common.TCPTuple, dir uint8,
 	private protos.ProtocolData,
 ) protos.ProtocolData {
+	gp.delHPackDecoder(tcptuple.Hashable())
 	return private
 }
 
