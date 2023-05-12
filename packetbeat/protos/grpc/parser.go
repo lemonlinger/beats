@@ -168,6 +168,7 @@ func (p *parser) parse() (*message, error) {
 			if err == io.EOF {
 				return p.message, nil
 			}
+			return nil, err
 		}
 
 		switch frame := frame.(type) {
@@ -236,9 +237,8 @@ func (p *parser) parse() (*message, error) {
 			}
 		case *http2.RSTStreamFrame:
 			return nil, errors.New("stream was reset")
-		default:
-			continue
+		case *http2.GoAwayFrame:
+			return nil, errors.New("server is going away")
 		}
 	}
-	return nil, nil
 }
