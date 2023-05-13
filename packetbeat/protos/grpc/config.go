@@ -18,6 +18,7 @@ type grpcConfig struct {
 	ProtoImportPaths         []string `config:"proto_import_paths"`
 	ProtoFileNames           []string `config:"proto_file_names"`
 	GRPCReflectionServerAddr string   `config:"grpc_reflection_server_addr"`
+	GuessPath                bool     `config:"guess_path"`
 }
 
 var (

@@ -148,6 +148,7 @@ func (gp *grpcPlugin) setFromConfig(config *grpcConfig) error {
 	parser.protoImportPaths = config.ProtoImportPaths
 	parser.protoFileNames = config.ProtoFileNames
 	parser.grpcReflectionServerAddr = config.GRPCReflectionServerAddr
+	parser.guessPath = config.GuessPath
 
 	// set transaction correlator configuration
 	trans := &gp.transConfig

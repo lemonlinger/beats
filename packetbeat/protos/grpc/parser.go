@@ -5,9 +5,11 @@ import (
 	"errors"
 	"io"
 	"io/ioutil"
+	"strings"
 
 	"github.com/jhump/protoreflect/dynamic"
 	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/hpack"
 
 	"github.com/elastic/beats/v7/libbeat/common/streambuf"
 	"github.com/elastic/beats/v7/packetbeat/protos"
@@ -35,6 +37,7 @@ type parserConfig struct {
 	protoImportPaths         []string
 	protoFileNames           []string
 	grpcReflectionServerAddr string
+	guessPath                bool
 }
 
 type message struct {
@@ -202,18 +205,26 @@ func (p *parser) parse() (*message, error) {
 			hfs, err := p.hpackDecoer.Decode(frame)
 			if err == nil {
 				for _, field := range hfs {
-					headers[field.Name] = field.Value
-					if field.Name == ":path" {
-						p.pathcache[frame.StreamID] = field.Value
+					nf, ok := fixHeader(field)
+					if !ok {
+						continue
+					}
+					headers[nf.Name] = nf.Value
+					if nf.Name == ":path" {
+						p.pathcache[frame.StreamID] = nf.Value
 					}
 				}
 			} else {
 				// try to parse partially
 				buf := frame.HeaderBlockFragment()
 				for _, field := range p.hpackDecoer.DecodePartial(buf) {
+					nf, ok := fixHeader(field)
+					if !ok {
+						continue
+					}
 					headers[field.Name] = field.Value
-					if field.Name == ":path" {
-						p.pathcache[frame.StreamID] = field.Value
+					if nf.Name == ":path" {
+						p.pathcache[frame.StreamID] = nf.Value
 					}
 				}
 				p.message.headerPartiallyParse = true
@@ -242,7 +253,7 @@ func (p *parser) parse() (*message, error) {
 			if path, ok := p.pathcache[frame.StreamID]; ok && path != "" {
 				possiblePaths = append(possiblePaths, path)
 			}
-			if len(possiblePaths) == 0 {
+			if len(possiblePaths) == 0 && p.config.guessPath {
 				possiblePaths = p.protoPrarser.GetAllPaths()
 				p.message.pathGuessed = true
 			}
@@ -291,4 +302,20 @@ func (p *parser) parse() (*message, error) {
 
 func (p *parser) clear() {
 	p.pathcache = map[uint32]string{}
+}
+
+func fixHeader(f hpack.HeaderField) (nf hpack.HeaderField, ok bool) {
+	if f.Name == ":path" {
+		if strings.HasPrefix(f.Value, "/") {
+			nf.Name, nf.Value = ":path", f.Value
+			ok = true
+		} else {
+			ok = false
+		}
+		return
+	}
+
+	nf = f
+	ok = true
+	return
 }
