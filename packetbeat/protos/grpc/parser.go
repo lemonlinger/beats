@@ -1,6 +1,7 @@
 package grpc
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"io/ioutil"
@@ -51,8 +52,9 @@ type message struct {
 	headerPartiallyParse bool
 	pathGuessed          bool
 
-	rawBody []byte
-	msgBody *dynamic.Message
+	rawBody    []byte
+	msgBody    *dynamic.Message
+	bodyBuffer bytes.Buffer
 
 	// indicator for parsed message being complete or requires more messages
 	// (if false) to be merged to generate full message.
@@ -186,7 +188,7 @@ func (p *parser) parse() (*message, error) {
 				return nil, nil
 			}
 			if err == io.EOF {
-				return p.message, nil
+				return nil, nil
 			}
 			return nil, err
 		}
@@ -219,10 +221,23 @@ func (p *parser) parse() (*message, error) {
 			p.message.mergeHeaders(headers)
 
 			if frame.StreamEnded() {
-				delete(p.pathcache, frame.StreamID)
+				if !p.message.IsRequest {
+					delete(p.pathcache, frame.StreamID)
+				}
 				return p.message, nil
 			}
 		case *http2.DataFrame:
+			_, err := p.message.bodyBuffer.Write(frame.Data())
+			if err != nil {
+				debugf("write data frame into buffer failed: %v", err)
+				return nil, err
+			}
+
+			// needs more data
+			if !frame.StreamEnded() {
+				continue
+			}
+
 			var possiblePaths []string
 			if path, ok := p.pathcache[frame.StreamID]; ok && path != "" {
 				possiblePaths = append(possiblePaths, path)
@@ -235,7 +250,7 @@ func (p *parser) parse() (*message, error) {
 			maxMsgSize := -1
 			for _, path := range possiblePaths {
 				var msgBody *dynamic.Message
-				data := frame.Data()
+				data := p.message.bodyBuffer.Bytes()
 				if len(data) > 5 {
 					data = data[5:]
 				}
@@ -261,10 +276,11 @@ func (p *parser) parse() (*message, error) {
 				}
 			}
 
-			if frame.StreamEnded() {
+			if !p.message.IsRequest {
 				delete(p.pathcache, frame.StreamID)
-				return p.message, nil
 			}
+			return p.message, nil
+
 		case *http2.RSTStreamFrame:
 			return nil, errors.New("stream was reset")
 		case *http2.GoAwayFrame:

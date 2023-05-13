@@ -27,22 +27,24 @@ type grpcPlugin struct {
 }
 
 type HPackDecoder struct {
-	decoder *hpack.Decoder
+	decoder        *hpack.Decoder
+	partialDecoder *hpack.Decoder
 }
 
 func newHPackDecoder() *HPackDecoder {
-	decoder := hpack.NewDecoder(65536, nil)
-	return &HPackDecoder{decoder: decoder}
+	decoder := hpack.NewDecoder(4096, nil)
+	partialDecoder := hpack.NewDecoder(4096, nil)
+	return &HPackDecoder{decoder: decoder, partialDecoder: partialDecoder}
 }
 
 func (h *HPackDecoder) DecodePartial(p []byte) (hfs []hpack.HeaderField) {
 	emitFunc := func(hf hpack.HeaderField) { hfs = append(hfs, hf) }
-	h.decoder.SetEmitFunc(emitFunc)
-	h.decoder.SetEmitEnabled(true)
-	h.decoder.Write(p)
-	h.decoder.Close()
-	h.decoder.SetEmitEnabled(false)
-	h.decoder.SetEmitFunc(nil)
+	h.partialDecoder.SetEmitFunc(emitFunc)
+	h.partialDecoder.SetEmitEnabled(true)
+	h.partialDecoder.Write(p)
+	h.partialDecoder.Close()
+	h.partialDecoder.SetEmitEnabled(false)
+	h.partialDecoder.SetEmitFunc(nil)
 	return hfs
 }
 
