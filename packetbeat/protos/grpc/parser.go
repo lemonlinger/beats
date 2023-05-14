@@ -205,8 +205,8 @@ func (p *parser) parse() (*message, error) {
 			hfs, err := p.hpackDecoer.Decode(frame)
 			if err == nil {
 				for _, field := range hfs {
-					nf, ok := fixHeaderByKey(field)
-					if ok {
+					nf, fixed, ok := fixHeaderByKey(field)
+					if fixed && ok {
 						headers[nf.Name] = nf.Value
 						if nf.Name == ":path" {
 							p.pathcache[frame.StreamID] = nf.Value
@@ -214,9 +214,11 @@ func (p *parser) parse() (*message, error) {
 						continue
 					}
 
-					nf, ok = fixHeaderByValue(field)
-					if ok {
-						headers[nf.Name] = nf.Value
+					if !fixed {
+						nf, ok = fixHeaderByValue(field)
+						if ok {
+							headers[nf.Name] = nf.Value
+						}
 					}
 
 				}
@@ -224,8 +226,8 @@ func (p *parser) parse() (*message, error) {
 				// try to parse partially
 				buf := frame.HeaderBlockFragment()
 				for _, field := range p.hpackDecoer.DecodePartial(buf) {
-					nf, ok := fixHeaderByKey(field)
-					if ok {
+					nf, fixed, ok := fixHeaderByKey(field)
+					if fixed && ok {
 						headers[nf.Name] = nf.Value
 						if nf.Name == ":path" {
 							p.pathcache[frame.StreamID] = nf.Value
@@ -233,9 +235,11 @@ func (p *parser) parse() (*message, error) {
 						continue
 					}
 
-					nf, ok = fixHeaderByValue(field)
-					if ok {
-						headers[nf.Name] = nf.Value
+					if !fixed {
+						nf, ok = fixHeaderByValue(field)
+						if ok {
+							headers[nf.Name] = nf.Value
+						}
 					}
 				}
 				p.message.headerPartiallyParse = true
@@ -318,7 +322,11 @@ func (p *parser) parseMessageBody(streamID uint32) {
 				p.message.path = path
 			}
 		} else {
-			p.message.Notes = append(p.message.Notes, "parse body failed: "+err.Error())
+			if p.message.IsRequest {
+				p.message.Notes = append(p.message.Notes, "parse req body failed: "+err.Error())
+			} else {
+				p.message.Notes = append(p.message.Notes, "parse resp body failed: "+err.Error())
+			}
 		}
 	}
 	if p.message.msgBody != nil {
@@ -329,37 +337,42 @@ func (p *parser) parseMessageBody(streamID uint32) {
 	}
 }
 
-func fixHeaderByKey(f hpack.HeaderField) (nf hpack.HeaderField, ok bool) {
+func fixHeaderByKey(f hpack.HeaderField) (nf hpack.HeaderField, fixed, ok bool) {
 	if f.Value == "" {
-		return f, false
+		return f, false, false
 	}
 
 	switch f.Name {
 	case ":path":
+		fixed = true
 		if strings.HasPrefix(f.Value, "/") {
 			nf = f
 			ok = true
 		}
 		return
 	case "content-type":
+		fixed = true
 		if strings.HasPrefix(f.Value, "application/") {
 			nf = f
 			ok = true
 		}
 		return
 	case "user-agent":
+		fixed = true
 		if strings.Contains(f.Value, "/") {
 			nf = f
 			ok = true
 		}
 		return
 	case ":authority":
+		fixed = true
 		if strings.Count(f.Value, ".") >= 2 {
 			nf = f
 			ok = true
 		}
 		return
 	case "x-tt-caller":
+		fixed = true
 		if !strings.ContainsAny(f.Value, "{}[]") && (strings.Contains(f.Value, "-") || strings.Contains(f.Value, ".")) {
 			nf = f
 			ok = true
@@ -367,7 +380,7 @@ func fixHeaderByKey(f hpack.HeaderField) (nf hpack.HeaderField, ok bool) {
 		return
 	}
 
-	return f, false
+	return f, false, false
 }
 
 func fixHeaderByValue(f hpack.HeaderField) (nf hpack.HeaderField, ok bool) {
