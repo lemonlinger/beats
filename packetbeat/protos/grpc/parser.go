@@ -147,7 +147,6 @@ func (p *parser) feed(pkt *protos.Packet) error {
 		if p.message == nil {
 			// allocate new message object to be used by parser with current timestamp
 			p.message = p.newMessage(pkt)
-			p.message.IsRequest = p.isServicePort(int(pkt.Tuple.DstPort))
 		}
 
 		msg, err := p.parse()
@@ -233,6 +232,7 @@ func (p *parser) parse() (*message, error) {
 			p.message.mergeHeaders(headers)
 
 			if frame.StreamEnded() {
+				p.parseMessageBody(frame.StreamID)
 				if !p.message.IsRequest {
 					delete(p.pathcache, frame.StreamID)
 				}
@@ -257,40 +257,7 @@ func (p *parser) parse() (*message, error) {
 				continue
 			}
 
-			var possiblePaths []string
-			if path, ok := p.pathcache[frame.StreamID]; ok && path != "" {
-				possiblePaths = append(possiblePaths, path)
-			}
-			if len(possiblePaths) == 0 && p.config.guessPath {
-				possiblePaths = p.protoPrarser.GetAllPaths()
-				p.message.pathGuessed = true
-			}
-
-			maxMsgSize := -1
-			for _, path := range possiblePaths {
-				var msgBody *dynamic.Message
-				data := p.message.bodyBuffer.Bytes()
-				if p.message.IsRequest {
-					msgBody, err = p.protoPrarser.MarshalRequest(path, data)
-				} else {
-					msgBody, err = p.protoPrarser.MarshalResponse(path, data)
-				}
-
-				if err == nil {
-					n := len(msgBody.String())
-					if n > maxMsgSize {
-						maxMsgSize = n
-						p.message.msgBody = msgBody
-						p.message.path = path
-					}
-				}
-			}
-			if p.message.msgBody != nil {
-				bs, err := p.message.msgBody.MarshalJSON()
-				if err == nil {
-					p.message.rawBody = bs
-				}
-			}
+			p.parseMessageBody(frame.StreamID)
 
 			if !p.message.IsRequest {
 				delete(p.pathcache, frame.StreamID)
@@ -307,6 +274,46 @@ func (p *parser) parse() (*message, error) {
 
 func (p *parser) clear() {
 	p.pathcache = map[uint32]string{}
+}
+
+func (p *parser) parseMessageBody(streamID uint32) {
+	var (
+		err           error
+		possiblePaths []string
+	)
+	if path, ok := p.pathcache[streamID]; ok && path != "" {
+		possiblePaths = append(possiblePaths, path)
+	}
+	if len(possiblePaths) == 0 && p.config.guessPath {
+		possiblePaths = p.protoPrarser.GetAllPaths()
+		p.message.pathGuessed = true
+	}
+
+	maxMsgSize := -1
+	for _, path := range possiblePaths {
+		var msgBody *dynamic.Message
+		data := p.message.bodyBuffer.Bytes()
+		if p.message.IsRequest {
+			msgBody, err = p.protoPrarser.MarshalRequest(path, data)
+		} else {
+			msgBody, err = p.protoPrarser.MarshalResponse(path, data)
+		}
+
+		if err == nil {
+			n := len(msgBody.String())
+			if n > maxMsgSize {
+				maxMsgSize = n
+				p.message.msgBody = msgBody
+				p.message.path = path
+			}
+		}
+	}
+	if p.message.msgBody != nil {
+		bs, err := p.message.msgBody.MarshalJSON()
+		if err == nil {
+			p.message.rawBody = bs
+		}
+	}
 }
 
 func fixHeader(f hpack.HeaderField) (nf hpack.HeaderField, ok bool) {
