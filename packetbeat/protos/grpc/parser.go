@@ -54,6 +54,7 @@ type message struct {
 
 	headerPartiallyParse bool
 	pathGuessed          bool
+	firstDataRecved      bool
 
 	rawBody    []byte
 	msgBody    *dynamic.Message
@@ -238,7 +239,14 @@ func (p *parser) parse() (*message, error) {
 				return p.message, nil
 			}
 		case *http2.DataFrame:
-			_, err := p.message.bodyBuffer.Write(frame.Data()[5:])
+			data := frame.Data()
+			if !p.message.firstDataRecved {
+				p.message.firstDataRecved = true
+				if len(data) > 5 {
+					data = data[5:]
+				}
+			}
+			_, err := p.message.bodyBuffer.Write(data)
 			if err != nil {
 				debugf("write data frame into buffer failed: %v", err)
 				return nil, err
