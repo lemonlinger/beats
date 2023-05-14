@@ -238,7 +238,7 @@ func (p *parser) parse() (*message, error) {
 				return p.message, nil
 			}
 		case *http2.DataFrame:
-			_, err := p.message.bodyBuffer.Write(frame.Data())
+			_, err := p.message.bodyBuffer.Write(frame.Data()[5:])
 			if err != nil {
 				debugf("write data frame into buffer failed: %v", err)
 				return nil, err
@@ -262,9 +262,6 @@ func (p *parser) parse() (*message, error) {
 			for _, path := range possiblePaths {
 				var msgBody *dynamic.Message
 				data := p.message.bodyBuffer.Bytes()
-				if len(data) > 5 {
-					data = data[5:]
-				}
 				if p.message.IsRequest {
 					msgBody, err = p.protoPrarser.MarshalRequest(path, data)
 				} else {
@@ -307,10 +304,8 @@ func (p *parser) clear() {
 func fixHeader(f hpack.HeaderField) (nf hpack.HeaderField, ok bool) {
 	if f.Name == ":path" {
 		if strings.HasPrefix(f.Value, "/") {
-			nf.Name, nf.Value = ":path", f.Value
+			nf = f
 			ok = true
-		} else {
-			ok = false
 		}
 		return
 	}
