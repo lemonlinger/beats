@@ -104,7 +104,7 @@ func (gp *grpcPlugin) init(results protos.Reporter, watcher *procs.ProcessesWatc
 	gp.watcher = watcher
 	gp.hpackDecoders = make(map[common.HashableTCPTuple]*HPackDecoder)
 
-	if gp.parserConfig.decodeBody {
+	if gp.parserConfig.decodeBody() {
 		// prior to use reflection
 		if gp.parserConfig.grpcReflectionServerAddr != "" {
 			debugf("new proto parser from reflection(%s)", gp.parserConfig.grpcReflectionServerAddr)
@@ -144,11 +144,18 @@ func (gp *grpcPlugin) setFromConfig(config *grpcConfig) error {
 		parser.servicePorts[p] = struct{}{}
 	}
 
-	parser.decodeBody = config.DecodeBody
+	parser.decodeRequestBody = config.DecodeRequestBody
+	parser.decodeResponseBody = config.DecodeResponseBody
 	parser.protoImportPaths = config.ProtoImportPaths
 	parser.protoFileNames = config.ProtoFileNames
 	parser.grpcReflectionServerAddr = config.GRPCReflectionServerAddr
-	parser.guessPath = config.GuessPath
+	if len(config.GuessPaths) > 0 {
+		if config.GuessPaths[0] == "*" {
+			parser.autoGuessPath = true
+		} else {
+			parser.guessPaths = config.GuessPaths
+		}
+	}
 
 	// set transaction correlator configuration
 	trans := &gp.transConfig

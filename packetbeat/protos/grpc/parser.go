@@ -11,6 +11,7 @@ import (
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
 
+	"github.com/elastic/beats/v7/libbeat/common"
 	"github.com/elastic/beats/v7/libbeat/common/streambuf"
 	"github.com/elastic/beats/v7/packetbeat/protos"
 	"github.com/elastic/beats/v7/packetbeat/protos/applayer"
@@ -33,15 +34,23 @@ type parserConfig struct {
 	maxBytes int
 
 	servicePorts             map[int]struct{}
-	decodeBody               bool
+	decodeRequestBody        bool
+	decodeResponseBody       bool
 	protoImportPaths         []string
 	protoFileNames           []string
 	grpcReflectionServerAddr string
-	guessPath                bool
+	guessPaths               []string
+	autoGuessPath            bool
+}
+
+func (c parserConfig) decodeBody() bool {
+	return c.decodeRequestBody || c.decodeResponseBody
 }
 
 type message struct {
 	applayer.Message
+
+	tuple common.IPPortTuple
 
 	streamID uint32
 
@@ -178,6 +187,7 @@ func (p *parser) newMessage(pkt *protos.Packet) *message {
 			IsRequest: p.isServicePort(int(pkt.Tuple.DstPort)),
 			Size:      0,
 		},
+		tuple: pkt.Tuple,
 	}
 }
 
@@ -292,6 +302,16 @@ func (p *parser) clear() {
 }
 
 func (p *parser) parseMessageBody(streamID uint32) {
+	if p.message.IsRequest && !p.config.decodeRequestBody {
+		return
+	}
+	if !p.message.IsRequest && !p.config.decodeResponseBody {
+		if path, ok := p.pathcache[streamID]; ok && path != "" {
+			p.message.path = path
+		}
+		return
+	}
+
 	var (
 		err           error
 		possiblePaths []string
@@ -299,9 +319,14 @@ func (p *parser) parseMessageBody(streamID uint32) {
 	if path, ok := p.pathcache[streamID]; ok && path != "" {
 		possiblePaths = append(possiblePaths, path)
 	}
-	if len(possiblePaths) == 0 && p.config.guessPath {
-		possiblePaths = p.protoPrarser.GetAllPaths()
-		p.message.pathGuessed = true
+	if len(possiblePaths) == 0 {
+		if p.config.autoGuessPath {
+			possiblePaths = p.protoPrarser.GetAllPaths()
+			p.message.pathGuessed = true
+		} else if len(p.config.guessPaths) > 0 {
+			possiblePaths = p.config.guessPaths
+			p.message.pathGuessed = true
+		}
 	}
 
 	maxMsgSize := -1
