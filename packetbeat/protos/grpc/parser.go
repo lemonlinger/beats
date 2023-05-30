@@ -198,14 +198,9 @@ func (p *parser) newMessage(pkt *protos.Packet) *message {
 func (p *parser) getPath(streamID uint32) string {
 	s, ok := p.pathcache.Get(streamID)
 	if ok {
-		return s.(string)
+		return s.(*message).path
 	}
 	return ""
-}
-
-func (p *parser) setPath(streamID uint32, path string) {
-	p.pathcache.SetWithTTL(streamID, path, 1, 3*time.Second)
-	p.pathcache.Wait()
 }
 
 func (p *parser) deletePath(streamID uint32) {
@@ -239,9 +234,6 @@ func (p *parser) parse() (*message, error) {
 					nf, fixed, ok := fixHeaderByKey(field)
 					if fixed && ok {
 						headers[nf.Name] = nf.Value
-						if nf.Name == ":path" {
-							p.setPath(frame.StreamID, nf.Value)
-						}
 						continue
 					}
 
@@ -259,9 +251,6 @@ func (p *parser) parse() (*message, error) {
 					nf, fixed, ok := fixHeaderByKey(field)
 					if fixed && ok {
 						headers[nf.Name] = nf.Value
-						if nf.Name == ":path" {
-							p.setPath(frame.StreamID, nf.Value)
-						}
 						continue
 					}
 
