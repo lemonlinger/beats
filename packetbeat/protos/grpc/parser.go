@@ -290,8 +290,10 @@ func (p *parser) parse() (*message, error) {
 			return p.message, nil
 
 		case *http2.RSTStreamFrame:
+			p.pathcache = make(map[uint32]string)
 			return nil, errors.New("stream was reset")
 		case *http2.GoAwayFrame:
+			p.pathcache = make(map[uint32]string)
 			return nil, errors.New("server is going away")
 		}
 	}
