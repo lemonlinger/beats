@@ -7,6 +7,7 @@ import (
 	"github.com/elastic/beats/v7/libbeat/common"
 	"github.com/elastic/beats/v7/packetbeat/procs"
 	"github.com/elastic/beats/v7/packetbeat/protos/applayer"
+	"github.com/elastic/elastic-agent-libs/logp"
 )
 
 type transactions struct {
@@ -31,8 +32,8 @@ func (trans *transactions) init(c *transactionConfig, watcher *procs.ProcessesWa
 	trans.watcher = watcher
 	trans.onTransaction = cb
 	trans.requests, _ = ristretto.NewCache(&ristretto.Config{
-		NumCounters: 1e7,
-		MaxCost:     1 << 10,
+		NumCounters: 5000,
+		MaxCost:     512,
 		BufferItems: 64,
 	})
 }
@@ -64,6 +65,8 @@ func (trans *transactions) onMessage(
 		err = trans.onResponse(tuple, dir, msg)
 	}
 
+	logp.Info("cache.metrics: %s", trans.requests.Metrics.String())
+
 	return err
 }
 
@@ -78,7 +81,7 @@ func (trans *transactions) onRequest(
 	if !msg.isComplete {
 		return nil
 	}
-	trans.requests.Set(msg.streamID, msg, 1)
+	trans.requests.SetWithTTL(msg.streamID, msg, 1, 3*time.Second)
 	trans.requests.Wait()
 
 	if isDebug {
@@ -97,6 +100,7 @@ func (trans *transactions) onResponse(
 ) error {
 	msg.isComplete = msg.isCompletedResponse()
 	if !msg.isComplete {
+		trans.requests.Del(msg.streamID)
 		return nil
 	}
 	if isDebug {
@@ -109,13 +113,55 @@ func (trans *transactions) onResponse(
 func (trans *transactions) correlate(resp *message) error {
 	request, ok := trans.requests.Get(resp.streamID)
 	if !ok {
-		trans.requests.Del(resp.streamID)
 		return nil
 	}
+	trans.requests.Del(resp.streamID)
 	requ := request.(*message)
 	if err := trans.onTransaction(requ, resp); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+type messageList struct {
+	head, tail *message
+	timeout    time.Duration
+}
+
+func (ml *messageList) append(msg *message) {
+	if ml.tail == nil {
+		ml.head = msg
+	} else {
+		ml.tail.next = msg
+	}
+	msg.next = nil
+	ml.tail = msg
+}
+
+func (ml *messageList) empty() bool {
+	return ml.head == nil
+}
+
+func (ml *messageList) pop() *message {
+	if ml.head == nil {
+		return nil
+	}
+
+	ml.popExpired()
+
+	msg := ml.head
+	ml.head = ml.head.next
+	if ml.head == nil {
+		ml.tail = nil
+	}
+	return msg
+}
+
+func (ml *messageList) popExpired() {
+	msg := ml.head
+	for msg != nil && time.Since(msg.createdAt) >= ml.timeout {
+		ml.head = msg.next
+		msg = ml.head
+	}
 }
