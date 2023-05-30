@@ -234,6 +234,9 @@ func (p *parser) parse() (*message, error) {
 					nf, fixed, ok := fixHeaderByKey(field)
 					if fixed && ok {
 						headers[nf.Name] = nf.Value
+						if nf.Name == ":path" {
+							p.message.path = nf.Value
+						}
 						continue
 					}
 
@@ -251,6 +254,9 @@ func (p *parser) parse() (*message, error) {
 					nf, fixed, ok := fixHeaderByKey(field)
 					if fixed && ok {
 						headers[nf.Name] = nf.Value
+						if nf.Name == ":path" {
+							p.message.path = nf.Value
+						}
 						continue
 					}
 
