@@ -27,15 +27,11 @@ type transactionConfig struct {
 
 type transactionHandler func(requ, resp *message) error
 
-func (trans *transactions) init(c *transactionConfig, watcher *procs.ProcessesWatcher, cb transactionHandler) {
+func (trans *transactions) init(c *transactionConfig, watcher *procs.ProcessesWatcher, cb transactionHandler, cache *ristretto.Cache) {
 	trans.config = c
 	trans.watcher = watcher
 	trans.onTransaction = cb
-	trans.requests, _ = ristretto.NewCache(&ristretto.Config{
-		NumCounters: 5000,
-		MaxCost:     512,
-		BufferItems: 64,
-	})
+	trans.requests = cache
 }
 
 func (trans *transactions) clear() {

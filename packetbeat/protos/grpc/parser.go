@@ -117,6 +117,7 @@ func (p *parser) init(
 	cfg *parserConfig,
 	decoder *HPackDecoder,
 	protoParser ProtoParser,
+	cache *ristretto.Cache,
 	onMessage func(*message) error,
 ) {
 	*p = parser{
@@ -125,12 +126,8 @@ func (p *parser) init(
 		hpackDecoer:  decoder,
 		protoPrarser: protoParser,
 		onMessage:    onMessage,
+		pathcache:    cache,
 	}
-	p.pathcache, _ = ristretto.NewCache(&ristretto.Config{
-		NumCounters: 5000,
-		MaxCost:     512,
-		BufferItems: 64,
-	})
 }
 
 func (p *parser) append(data []byte) error {

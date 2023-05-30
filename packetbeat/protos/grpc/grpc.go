@@ -3,6 +3,7 @@ package grpc
 import (
 	"time"
 
+	"github.com/dgraph-io/ristretto"
 	"github.com/elastic/beats/v7/libbeat/common"
 	"github.com/elastic/elastic-agent-libs/logp"
 	"golang.org/x/net/http2"
@@ -56,6 +57,7 @@ func (h *HPackDecoder) Decode(hf *http2.HeadersFrame) ([]hpack.HeaderField, erro
 type connection struct {
 	streams [2]*stream
 	trans   transactions
+	cache   *ristretto.Cache
 }
 
 // Uni-directional tcp stream state for parsing messages.
@@ -193,7 +195,7 @@ func (gp *grpcPlugin) Parse(
 	st := conn.streams[dir]
 	if st == nil {
 		st = &stream{}
-		st.parser.init(&gp.parserConfig, gp.getHPACKDecoder(tcptuple.Hashable()), gp.protoParser, func(msg *message) error {
+		st.parser.init(&gp.parserConfig, gp.getHPACKDecoder(tcptuple.Hashable()), gp.protoParser, conn.cache, func(msg *message) error {
 			return conn.trans.onMessage(tcptuple.IPPort(), dir, msg)
 		})
 		conn.streams[dir] = st
@@ -264,7 +266,12 @@ func (gp *grpcPlugin) ensureConnection(private protos.ProtocolData) *connection 
 	conn := getConnection(private)
 	if conn == nil {
 		conn = &connection{}
-		conn.trans.init(&gp.transConfig, gp.watcher, gp.pub.onTransaction)
+		conn.cache, _ = ristretto.NewCache(&ristretto.Config{
+			NumCounters: 5000,
+			MaxCost:     512,
+			BufferItems: 64,
+		})
+		conn.trans.init(&gp.transConfig, gp.watcher, gp.pub.onTransaction, conn.cache)
 	}
 	return conn
 }
