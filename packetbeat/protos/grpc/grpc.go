@@ -205,7 +205,7 @@ func (gp *grpcPlugin) Parse(
 		conn.streams[dir] = st
 	}
 
-	if err := st.parser.feed(pkt); err != nil {
+	if err := st.parser.feed(tcptuple.IPPort(), pkt); err != nil {
 		debugf("%v, dropping TCP stream for error in direction %v.", err, dir)
 		gp.onDropConnection(conn)
 		return nil

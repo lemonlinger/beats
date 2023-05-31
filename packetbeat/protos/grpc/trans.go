@@ -5,7 +5,6 @@ import (
 
 	"github.com/elastic/beats/v7/libbeat/common"
 	"github.com/elastic/beats/v7/packetbeat/procs"
-	"github.com/elastic/beats/v7/packetbeat/protos/applayer"
 )
 
 type transactions struct {
@@ -43,8 +42,6 @@ func (trans *transactions) onMessage(
 ) error {
 	var err error
 
-	msg.Tuple = *tuple
-	msg.Transport = applayer.TransportTCP
 	msg.CmdlineTuple = trans.watcher.FindProcessesTuple(&msg.Tuple, msg.Transport)
 
 	if msg.IsRequest {

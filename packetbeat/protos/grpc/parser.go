@@ -151,7 +151,7 @@ func (p *parser) isServicePort(port int) bool {
 	return ok
 }
 
-func (p *parser) feed(pkt *protos.Packet) error {
+func (p *parser) feed(connTuple *common.IPPortTuple, pkt *protos.Packet) error {
 	data := pkt.Payload
 	if err := p.append(data); err != nil {
 		return err
@@ -160,7 +160,7 @@ func (p *parser) feed(pkt *protos.Packet) error {
 	for p.buf.Total() > 0 {
 		if p.message == nil {
 			// allocate new message object to be used by parser with current timestamp
-			p.message = p.newMessage(pkt)
+			p.message = p.newMessage(connTuple, pkt)
 		}
 
 		msg, err := p.parse()
@@ -184,16 +184,18 @@ func (p *parser) feed(pkt *protos.Packet) error {
 	return nil
 }
 
-func (p *parser) newMessage(pkt *protos.Packet) *message {
-	return &message{
+func (p *parser) newMessage(connTuple *common.IPPortTuple, pkt *protos.Packet) *message {
+	msg := &message{
 		Message: applayer.Message{
 			Ts:        pkt.Ts,
+			Tuple:     *connTuple,
 			Transport: applayer.TransportTCP,
 			IsRequest: p.isServicePort(int(pkt.Tuple.DstPort)),
 			Size:      0,
 		},
 		tuple: pkt.Tuple,
 	}
+	return msg
 }
 
 func (p *parser) getPath(m *message) string {
@@ -202,10 +204,6 @@ func (p *parser) getPath(m *message) string {
 		return s.(*message).path
 	}
 	return ""
-}
-
-func (p *parser) deletePath(m *message) {
-	p.pathcache.Delete(m.key())
 }
 
 func (p *parser) parse() (*message, error) {
