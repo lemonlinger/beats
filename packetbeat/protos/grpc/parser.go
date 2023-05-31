@@ -3,12 +3,11 @@ package grpc
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"strings"
-	"time"
 
-	"github.com/dgraph-io/ristretto"
 	"github.com/jhump/protoreflect/dynamic"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
@@ -29,7 +28,7 @@ type parser struct {
 	protoPrarser ProtoParser
 
 	// stream ID -> path
-	pathcache *ristretto.Cache
+	pathcache *common.Cache
 }
 
 type parserConfig struct {
@@ -75,10 +74,12 @@ type message struct {
 	// (if false) to be merged to generate full message.
 	isComplete bool
 
-	createdAt time.Time
-
 	// list element use by 'transactions' for correlation
 	next *message
+}
+
+func (m *message) key() string {
+	return fmt.Sprintf("%s:%d", m.Tuple.Hashable(), m.streamID)
 }
 
 func (m *message) mergeHeaders(headers map[string]string) {
@@ -117,7 +118,7 @@ func (p *parser) init(
 	cfg *parserConfig,
 	decoder *HPackDecoder,
 	protoParser ProtoParser,
-	cache *ristretto.Cache,
+	cache *common.Cache,
 	onMessage func(*message) error,
 ) {
 	*p = parser{
@@ -195,16 +196,16 @@ func (p *parser) newMessage(pkt *protos.Packet) *message {
 	}
 }
 
-func (p *parser) getPath(streamID uint32) string {
-	s, ok := p.pathcache.Get(streamID)
-	if ok {
+func (p *parser) getPath(m *message) string {
+	s := p.pathcache.Get(m.key())
+	if s != nil {
 		return s.(*message).path
 	}
 	return ""
 }
 
-func (p *parser) deletePath(streamID uint32) {
-	p.pathcache.Del(streamID)
+func (p *parser) deletePath(m *message) {
+	p.pathcache.Delete(m.key())
 }
 
 func (p *parser) parse() (*message, error) {
@@ -254,9 +255,6 @@ func (p *parser) parse() (*message, error) {
 					nf, fixed, ok := fixHeaderByKey(field)
 					if fixed && ok {
 						headers[nf.Name] = nf.Value
-						if nf.Name == ":path" {
-							p.message.path = nf.Value
-						}
 						continue
 					}
 
@@ -273,9 +271,9 @@ func (p *parser) parse() (*message, error) {
 
 			if frame.StreamEnded() {
 				p.parseMessageBody(frame.StreamID)
-				if !p.message.IsRequest {
-					p.deletePath(frame.StreamID)
-				}
+				// if !p.message.IsRequest {
+				// 	p.deletePath(frame.StreamID)
+				// }
 				return p.message, nil
 			}
 		case *http2.DataFrame:
@@ -299,23 +297,23 @@ func (p *parser) parse() (*message, error) {
 
 			p.parseMessageBody(frame.StreamID)
 
-			if !p.message.IsRequest {
-				p.deletePath(frame.StreamID)
-			}
+			// if !p.message.IsRequest {
+			// 	p.deletePath(frame.StreamID)
+			// }
 			return p.message, nil
 
 		case *http2.RSTStreamFrame:
-			p.pathcache.Clear()
+			p.pathcache.CleanUp()
 			return nil, errors.New("stream was reset")
 		case *http2.GoAwayFrame:
-			p.pathcache.Clear()
+			p.pathcache.CleanUp()
 			return nil, errors.New("server is going away")
 		}
 	}
 }
 
 func (p *parser) clear() {
-	p.pathcache.Clear()
+	p.pathcache.CleanUp()
 }
 
 func (p *parser) parseMessageBody(streamID uint32) {
@@ -323,7 +321,7 @@ func (p *parser) parseMessageBody(streamID uint32) {
 		return
 	}
 	if !p.message.IsRequest && !p.config.decodeResponseBody {
-		if path := p.getPath(streamID); path != "" {
+		if path := p.getPath(p.message); path != "" {
 			p.message.path = path
 		}
 		return
@@ -333,7 +331,7 @@ func (p *parser) parseMessageBody(streamID uint32) {
 		err           error
 		possiblePaths []string
 	)
-	if path := p.getPath(streamID); path != "" {
+	if path := p.getPath(p.message); path != "" {
 		possiblePaths = append(possiblePaths, path)
 	}
 	if len(possiblePaths) == 0 {

@@ -3,7 +3,6 @@ package grpc
 import (
 	"time"
 
-	"github.com/dgraph-io/ristretto"
 	"github.com/elastic/beats/v7/libbeat/common"
 	"github.com/elastic/elastic-agent-libs/logp"
 	"golang.org/x/net/http2"
@@ -25,6 +24,7 @@ type grpcPlugin struct {
 
 	protoParser   ProtoParser
 	hpackDecoders map[common.HashableTCPTuple]*HPackDecoder
+	reqcache      *common.Cache
 }
 
 type HPackDecoder struct {
@@ -57,7 +57,6 @@ func (h *HPackDecoder) Decode(hf *http2.HeadersFrame) ([]hpack.HeaderField, erro
 type connection struct {
 	streams [2]*stream
 	trans   transactions
-	cache   *ristretto.Cache
 }
 
 // Uni-directional tcp stream state for parsing messages.
@@ -124,6 +123,11 @@ func (gp *grpcPlugin) init(results protos.Reporter, watcher *procs.ProcessesWatc
 			gp.protoParser = protoParser
 		}
 	}
+	gp.reqcache = common.NewCache(
+		gp.transConfig.transactionTimeout,
+		protos.DefaultTransactionHashSize,
+	)
+	gp.reqcache.StartJanitor(gp.transConfig.transactionTimeout)
 
 	isDebug = logp.IsDebug("grpc")
 	debugf("succeed to init grpc plugin")
@@ -195,7 +199,7 @@ func (gp *grpcPlugin) Parse(
 	st := conn.streams[dir]
 	if st == nil {
 		st = &stream{}
-		st.parser.init(&gp.parserConfig, gp.getHPACKDecoder(tcptuple.Hashable()), gp.protoParser, conn.cache, func(msg *message) error {
+		st.parser.init(&gp.parserConfig, gp.getHPACKDecoder(tcptuple.Hashable()), gp.protoParser, gp.reqcache, func(msg *message) error {
 			return conn.trans.onMessage(tcptuple.IPPort(), dir, msg)
 		})
 		conn.streams[dir] = st
@@ -266,12 +270,7 @@ func (gp *grpcPlugin) ensureConnection(private protos.ProtocolData) *connection 
 	conn := getConnection(private)
 	if conn == nil {
 		conn = &connection{}
-		conn.cache, _ = ristretto.NewCache(&ristretto.Config{
-			NumCounters: 5000,
-			MaxCost:     512,
-			BufferItems: 64,
-		})
-		conn.trans.init(&gp.transConfig, gp.watcher, gp.pub.onTransaction, conn.cache)
+		conn.trans.init(&gp.transConfig, gp.watcher, gp.pub.onTransaction, gp.reqcache)
 	}
 	return conn
 }
